@@ -104,6 +104,10 @@ type (
 		// Controls parallel endpoint queries and batch request limits to prevent resource exhaustion.
 		ConcurrencyConfig gateway.ConcurrencyConfig `yaml:"concurrency_config,omitempty"`
 
+		// EndpointPolicy defines operator-level security policies for endpoint selection.
+		// Allows gateway operators to enforce HTTPS-only, domain-only, etc.
+		EndpointPolicy gateway.EndpointPolicyConfig `yaml:"endpoint_policy,omitempty"`
+
 		// UnifiedServices is the unified YAML-driven service configuration.
 		// This consolidates all per-service settings (type, rpc_types, fallback, health_checks)
 		// into a single structure with defaults and per-service overrides.

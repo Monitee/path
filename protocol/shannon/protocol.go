@@ -138,6 +138,9 @@ type Protocol struct {
 	// This consolidates all per-service settings and enables per-service overrides.
 	unifiedServicesConfig *gateway.UnifiedServicesConfig
 
+	// endpointPolicy holds operator-level security policies for endpoint selection.
+	endpointPolicy gateway.EndpointPolicyConfig
+
 	// supplierBlacklist tracks suppliers with validation/signature errors.
 	// These suppliers are temporarily excluded from selection to prevent
 	// penalizing domain reputation for individual supplier issues.
@@ -273,6 +276,9 @@ func NewProtocol(
 
 		// unifiedServicesConfig for per-service configuration overrides
 		unifiedServicesConfig: &config.UnifiedServices,
+
+		// endpointPolicy holds operator-level endpoint security policies
+		endpointPolicy: config.EndpointPolicy,
 
 		// supplierBlacklist tracks suppliers with validation/signature errors
 		supplierBlacklist: newSupplierBlacklist(),
@@ -1087,6 +1093,47 @@ func (p *Protocol) getSessionsUniqueEndpoints(
 			qualifiedEndpoints = filteredEndpoints
 		}
 
+		// CONFIG-DRIVEN SUPPLIER BLOCKLIST FILTERING
+		// Permanently exclude suppliers listed in the service's blocked_suppliers config.
+		// This blocks known-malicious suppliers (e.g., serving spam/malware redirects).
+		// Applied before allowlist so that explicitly blocked suppliers cannot be overridden.
+		if blockedSuppliers := p.getBlockedSuppliers(serviceID); len(blockedSuppliers) > 0 {
+			blockedSet := make(map[string]struct{}, len(blockedSuppliers))
+			for _, addr := range blockedSuppliers {
+				blockedSet[addr] = struct{}{}
+			}
+
+			unblockedEndpoints := make(map[protocol.EndpointAddr]endpoint)
+			blockedCount := 0
+
+			for addr, ep := range qualifiedEndpoints {
+				supplierAddr := ep.Supplier()
+				if _, isBlocked := blockedSet[supplierAddr]; isBlocked {
+					blockedCount++
+					logger.Debug().
+						Str("supplier", supplierAddr).
+						Str("endpoint", string(addr)).
+						Msg("Skipping config-blocked supplier")
+				} else {
+					unblockedEndpoints[addr] = ep
+				}
+			}
+
+			if blockedCount > 0 {
+				logger.Info().
+					Int("blocked", blockedCount).
+					Int("remaining", len(unblockedEndpoints)).
+					Msg("Filtered out config-blocked suppliers")
+			}
+
+			qualifiedEndpoints = unblockedEndpoints
+		}
+
+		// ENDPOINT POLICY FILTERING
+		// Apply operator-level security policies (require_https, require_domain).
+		// This is a gateway operator decision, not a per-service override.
+		qualifiedEndpoints = p.filterByEndpointPolicy(qualifiedEndpoints, filterByRPCType, logger)
+
 		// SUPPLIER ALLOWLIST FILTERING
 		// If allowed suppliers are specified (via header or load testing config),
 		// filter to only those suppliers, bypassing reputation and other logic.
@@ -1630,6 +1677,33 @@ func (p *Protocol) getRPCTypeFallback(serviceID protocol.ServiceID, requestedRPC
 // This is used by components that need to respect concurrency limits.
 func (p *Protocol) GetConcurrencyConfig() gateway.ConcurrencyConfig {
 	return p.concurrencyConfig
+}
+
+// getBlockedSuppliers returns the config-driven blocked supplier list for a service.
+// Returns nil if no blocked suppliers are configured.
+func (p *Protocol) getBlockedSuppliers(serviceID protocol.ServiceID) []string {
+	if p.unifiedServicesConfig == nil {
+		return nil
+	}
+
+	for i := range p.unifiedServicesConfig.Services {
+		if p.unifiedServicesConfig.Services[i].ID == serviceID {
+			return p.unifiedServicesConfig.Services[i].BlockedSuppliers
+		}
+	}
+
+	return nil
+}
+
+// isSupplierConfigBlocked checks if a supplier address is in the config-driven blocklist for a service.
+func (p *Protocol) isSupplierConfigBlocked(serviceID protocol.ServiceID, supplierAddr string) bool {
+	blocked := p.getBlockedSuppliers(serviceID)
+	for _, b := range blocked {
+		if b == supplierAddr {
+			return true
+		}
+	}
+	return false
 }
 
 // SetQoSServiceRegistry sets the QoS service registry for the protocol.

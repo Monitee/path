@@ -99,6 +99,18 @@ type LatencyProfileConfig struct {
 	VerySlowPenalty float64 `yaml:"very_slow_penalty,omitempty"`
 }
 
+// EndpointPolicyConfig defines operator-level security policies for endpoint selection.
+// Gateway operators can use this to enforce requirements on supplier endpoints.
+type EndpointPolicyConfig struct {
+	// RequireHTTPS rejects endpoints that don't use HTTPS (or WSS for websockets).
+	// When true, only endpoints with https:// or wss:// URLs are eligible for selection.
+	RequireHTTPS bool `yaml:"require_https,omitempty"`
+
+	// RequireDomain rejects endpoints that use raw IP addresses instead of domain names.
+	// When true, only endpoints with resolvable domain names are eligible for selection.
+	RequireDomain bool `yaml:"require_domain,omitempty"`
+}
+
 // ServiceReputationConfig holds per-service reputation configuration.
 type ServiceReputationConfig struct {
 	Enabled         *bool          `yaml:"enabled,omitempty"`
@@ -243,6 +255,13 @@ type ServiceConfig struct {
 	Fallback             *ServiceFallbackConfig        `yaml:"fallback,omitempty"`
 	HealthChecks         *ServiceHealthCheckOverride   `yaml:"health_checks,omitempty"`
 	ExternalBlockSources []ExternalBlockSource         `yaml:"external_block_sources,omitempty"`
+
+	// BlockedSuppliers is a list of supplier addresses that should be permanently excluded
+	// from endpoint selection for this service. This is used to block known-malicious suppliers
+	// whose on-chain staked endpoints serve harmful content (e.g., spam, malware redirects).
+	// Unlike the auto-generated supplier blacklist (which is temporary/session-scoped),
+	// this is a persistent, config-driven blocklist.
+	BlockedSuppliers []string `yaml:"blocked_suppliers,omitempty"`
 }
 
 // UnifiedServicesConfig is the top-level configuration for the unified service system.

@@ -3,6 +3,7 @@ package noop
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -319,4 +320,110 @@ func TestNoOpQoS_ParseHTTPRequest_PreservesDetectedRPCType(t *testing.T) {
 				"payload RPCType should match the detected type, not be hardcoded to UNKNOWN_RPC")
 		})
 	}
+}
+
+func TestNoOpQoS_BatchSplitting(t *testing.T) {
+	batchBody := `[{"jsonrpc":"2.0","method":"eth_getLogs","params":[],"id":60},{"jsonrpc":"2.0","method":"eth_getLogs","params":[],"id":61},{"jsonrpc":"2.0","method":"eth_getLogs","params":[],"id":62}]`
+
+	qos := newTestQoS()
+	httpReq := &http.Request{
+		Method: http.MethodPost,
+		URL:    &url.URL{Path: "/"},
+		Body:   io.NopCloser(bytes.NewBufferString(batchBody)),
+	}
+
+	reqCtx, ok := qos.ParseHTTPRequest(context.Background(), httpReq, sharedtypes.RPCType_JSON_RPC)
+	require.True(t, ok)
+
+	payloads := reqCtx.GetServicePayloads()
+	require.Len(t, payloads, 3, "batch of 3 should be split into 3 payloads")
+
+	for i, p := range payloads {
+		require.Equal(t, sharedtypes.RPCType_JSON_RPC, p.RPCType)
+		require.Equal(t, http.MethodPost, p.Method)
+		// Each payload should be an individual JSON object, not the full array
+		require.True(t, p.Data[0] == '{', "payload %d should be individual JSON object, got: %s", i, p.Data[:20])
+	}
+}
+
+func TestNoOpQoS_BatchSplitting_SingleItemNotSplit(t *testing.T) {
+	// A single-item array should NOT be split (len(items) <= 1)
+	singleBody := `[{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}]`
+
+	qos := newTestQoS()
+	httpReq := &http.Request{
+		Method: http.MethodPost,
+		URL:    &url.URL{Path: "/"},
+		Body:   io.NopCloser(bytes.NewBufferString(singleBody)),
+	}
+
+	reqCtx, ok := qos.ParseHTTPRequest(context.Background(), httpReq, sharedtypes.RPCType_JSON_RPC)
+	require.True(t, ok)
+
+	payloads := reqCtx.GetServicePayloads()
+	require.Len(t, payloads, 1, "single-item batch should not be split")
+}
+
+func TestNoOpQoS_BatchSplitting_NonJSONRPCNotSplit(t *testing.T) {
+	// REST requests should never be split, even if body looks like JSON array
+	arrayBody := `[{"foo":"bar"},{"baz":"qux"}]`
+
+	qos := newTestQoS()
+	httpReq := &http.Request{
+		Method: http.MethodPost,
+		URL:    &url.URL{Path: "/"},
+		Body:   io.NopCloser(bytes.NewBufferString(arrayBody)),
+	}
+
+	reqCtx, ok := qos.ParseHTTPRequest(context.Background(), httpReq, sharedtypes.RPCType_REST)
+	require.True(t, ok)
+
+	payloads := reqCtx.GetServicePayloads()
+	require.Len(t, payloads, 1, "REST requests should not be split")
+	require.Equal(t, arrayBody, payloads[0].Data, "full body should be preserved")
+}
+
+func TestNoOpQoS_BatchSplitting_GETNotSplit(t *testing.T) {
+	qos := newTestQoS()
+	httpReq := &http.Request{
+		Method: http.MethodGet,
+		URL:    &url.URL{Path: "/status"},
+		Body:   io.NopCloser(bytes.NewBufferString("")),
+	}
+
+	reqCtx, ok := qos.ParseHTTPRequest(context.Background(), httpReq, sharedtypes.RPCType_JSON_RPC)
+	require.True(t, ok)
+
+	payloads := reqCtx.GetServicePayloads()
+	require.Len(t, payloads, 1, "GET requests should not be split")
+}
+
+func TestNoOpQoS_BatchResponseReassembly(t *testing.T) {
+	batchBody := `[{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1},{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":2}]`
+
+	qos := newTestQoS()
+	httpReq := &http.Request{
+		Method: http.MethodPost,
+		URL:    &url.URL{Path: "/"},
+		Body:   io.NopCloser(bytes.NewBufferString(batchBody)),
+	}
+
+	reqCtx, ok := qos.ParseHTTPRequest(context.Background(), httpReq, sharedtypes.RPCType_JSON_RPC)
+	require.True(t, ok)
+
+	payloads := reqCtx.GetServicePayloads()
+	require.Len(t, payloads, 2)
+
+	// Simulate responses from two different suppliers
+	reqCtx.UpdateWithResponse("supplier1-https://a.com", []byte(`{"jsonrpc":"2.0","result":"0x1","id":1}`), 200, "1")
+	reqCtx.UpdateWithResponse("supplier2-https://b.com", []byte(`{"jsonrpc":"2.0","result":"0x38","id":2}`), 200, "2")
+
+	resp := reqCtx.GetHTTPResponse()
+	require.Equal(t, 200, resp.GetHTTPStatusCode())
+
+	// Response should be a JSON array
+	var items []json.RawMessage
+	err := json.Unmarshal(resp.GetPayload(), &items)
+	require.NoError(t, err, "batch response should be a valid JSON array")
+	require.Len(t, items, 2, "should contain 2 responses")
 }

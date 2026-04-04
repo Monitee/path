@@ -1,6 +1,8 @@
 package noop
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 
 	sharedtypes "github.com/pokt-network/poktroll/x/shared/types"
@@ -47,23 +49,53 @@ type requestContext struct {
 	// Used to set the correct RPCType on the service payload instead of UNKNOWN_RPC.
 	detectedRPCType sharedtypes.RPCType
 
+	// isBatch is true when the request was a JSON-RPC batch (array of requests).
+	// Set by GetServicePayloads when batch splitting occurs.
+	isBatch bool
+
 	// endpointSelector is the selector used for choosing endpoints.
 	// When block height tracking is active, this performs sync-allowance filtering.
 	endpointSelector protocol.EndpointSelector
 }
 
-// GetServicePayload returns the payload to be sent to a service endpoint.
+// GetServicePayloads returns the payload(s) to be sent to service endpoint(s).
+// For JSON-RPC batch requests (body starts with '['), each item in the array
+// is returned as a separate payload so the gateway can distribute them across
+// different suppliers — consistent with how EVM/Cosmos QoS handles batches.
+// For all other requests, the full body is returned as a single payload.
 // Implements the gateway.RequestQoSContext interface.
 func (rc *requestContext) GetServicePayloads() []protocol.Payload {
+	path := rc.httpRequestPath
+
+	// Only attempt batch splitting for JSON-RPC requests (POST with array body)
+	if rc.httpRequestMethod == http.MethodPost && rc.detectedRPCType == sharedtypes.RPCType_JSON_RPC {
+		trimmed := bytes.TrimSpace(rc.httpRequestBody)
+		if len(trimmed) > 0 && trimmed[0] == '[' {
+			var items []json.RawMessage
+			if err := json.Unmarshal(trimmed, &items); err == nil && len(items) > 1 {
+				rc.isBatch = true
+				payloads := make([]protocol.Payload, 0, len(items))
+				for _, item := range items {
+					payloads = append(payloads, protocol.Payload{
+						Data:    string(item),
+						Method:  rc.httpRequestMethod,
+						Path:    path,
+						Headers: map[string]string{},
+						RPCType: rc.detectedRPCType,
+					})
+				}
+				return payloads
+			}
+		}
+	}
+
+	// Non-batch: return full body as single payload
 	payload := protocol.Payload{
 		Data:    string(rc.httpRequestBody),
 		Method:  rc.httpRequestMethod,
-		Path:    "", // set below
+		Path:    path,
 		Headers: map[string]string{},
 		RPCType: rc.detectedRPCType,
-	}
-	if rc.httpRequestPath != "" {
-		payload.Path = rc.httpRequestPath
 	}
 	return []protocol.Payload{payload}
 }
@@ -88,7 +120,8 @@ func (rc *requestContext) SetProtocolError(err error) {
 
 // GetHTTPResponse returns a user-facing response that fulfills the pathhttp.HTTPResponse interface.
 // Any preset failure responses, e.g. set during the construction of the requestContext instance, take priority.
-// After that, this method simply returns an HTTP response based on the most recently reported endpoint response.
+// For batch requests, individual responses are reassembled into a JSON array.
+// For single requests, returns the most recently reported endpoint response.
 // Implements the gateway.RequestQoSContext interface.
 func (rc *requestContext) GetHTTPResponse() pathhttp.HTTPResponse {
 	if rc.presetFailureResponse != nil {
@@ -101,6 +134,35 @@ func (rc *requestContext) GetHTTPResponse() pathhttp.HTTPResponse {
 			return getNoEndpointResponseWithError(rc.protocolError)
 		}
 		return getNoEndpointResponse()
+	}
+
+	// Reassemble batch responses into a JSON array
+	if rc.isBatch {
+		var items []json.RawMessage
+		for _, resp := range rc.receivedResponses {
+			if len(resp.ResponseBytes) > 0 {
+				// Strip trailing newline if present
+				payload := resp.ResponseBytes
+				if payload[len(payload)-1] == '\n' {
+					payload = payload[:len(payload)-1]
+				}
+				items = append(items, json.RawMessage(payload))
+			}
+		}
+
+		if len(items) == 0 {
+			return getNoEndpointResponse()
+		}
+
+		batchPayload, err := json.Marshal(items)
+		if err != nil {
+			return getNoEndpointResponse()
+		}
+
+		return &HTTPResponse{
+			httpStatusCode: http.StatusOK,
+			payload:        batchPayload,
+		}
 	}
 
 	latestResponse := rc.receivedResponses[len(rc.receivedResponses)-1]

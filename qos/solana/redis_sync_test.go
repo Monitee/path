@@ -250,7 +250,7 @@ func TestSolana_StartBackgroundSync_SyncsEndpointBlocks(t *testing.T) {
 	qos.endpointsMu.RUnlock()
 
 	assert.Equal(t, uint64(500), ep1.BlockHeight, "ep1 should be updated from Redis")
-	assert.Equal(t, uint64(300), ep2.BlockHeight, "ep2 should NOT be downgraded")
+	assert.Equal(t, uint64(200), ep2.BlockHeight, "ep2 should be overwritten with Redis value (leader is authority)")
 	assert.Nil(t, epNoEpoch.SolanaGetEpochInfoResponse, "ep_no_epoch should not have epoch info created")
 	assert.False(t, ep3Exists, "ep3 should not be created in local store")
 }

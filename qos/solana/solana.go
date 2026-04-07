@@ -327,7 +327,9 @@ func (q *QoS) StartBackgroundSync(ctx context.Context, syncInterval time.Duratio
 			if ep.SolanaGetEpochInfoResponse == nil {
 				continue // Need epoch info to be initialized
 			}
-			if redisHeight > ep.BlockHeight {
+			// Always overwrite with Redis value — the leader is the authority.
+			// If a node falls behind, non-leaders must see the lower block height.
+			if redisHeight != ep.BlockHeight {
 				ep.BlockHeight = redisHeight
 				q.endpoints[addr] = ep
 				updated++

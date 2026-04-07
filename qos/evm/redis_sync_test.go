@@ -173,7 +173,7 @@ func TestEVM_StartBackgroundSync_SyncsEndpointBlocks(t *testing.T) {
 	require.NotNil(t, ep1.checkBlockNumber.parsedBlockNumberResponse)
 	assert.Equal(t, uint64(500), *ep1.checkBlockNumber.parsedBlockNumberResponse, "ep1 should be updated from Redis")
 	require.NotNil(t, ep2.checkBlockNumber.parsedBlockNumberResponse)
-	assert.Equal(t, uint64(300), *ep2.checkBlockNumber.parsedBlockNumberResponse, "ep2 should NOT be downgraded")
+	assert.Equal(t, uint64(200), *ep2.checkBlockNumber.parsedBlockNumberResponse, "ep2 should be overwritten with Redis value (leader is authority)")
 	require.NotNil(t, epNil.checkBlockNumber.parsedBlockNumberResponse)
 	assert.Equal(t, uint64(600), *epNil.checkBlockNumber.parsedBlockNumberResponse, "ep_nil should be updated from Redis")
 	assert.True(t, ep3Exists, "ep3 should be created in local store from Redis")

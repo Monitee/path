@@ -224,7 +224,7 @@ func TestNoOp_StartBackgroundSync_SyncsEndpointBlocks(t *testing.T) {
 	qos.endpointStore.mu.RUnlock()
 
 	assert.Equal(t, uint64(500), ep1.blockHeight, "ep1 should be updated from Redis")
-	assert.Equal(t, uint64(300), ep2.blockHeight, "ep2 should NOT be downgraded")
+	assert.Equal(t, uint64(200), ep2.blockHeight, "ep2 should be overwritten with Redis value (leader is authority)")
 	assert.True(t, ep3Exists, "ep3 should be created in local store from Redis")
 	assert.Equal(t, uint64(400), ep3.blockHeight, "ep3 block height should match Redis")
 }

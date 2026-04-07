@@ -208,6 +208,9 @@ func (ss *serviceState) filterValidEndpointsWithDetails(availableEndpoints proto
 	// Build a URL→blockHeight lookup from ALL store entries (not just available endpoints).
 	// This lets us validate fresh endpoints against known block heights for the same URL
 	// (different supplier addresses staked against the same backend infrastructure).
+	// Uses MIN per URL: if ANY supplier at that URL reports a stale block height,
+	// the URL is considered stale. This prevents old high values from previous sessions
+	// masking current staleness.
 	urlBlockHeights := make(map[string]uint64)
 
 	ss.endpointStore.endpointsMu.RLock()
@@ -215,7 +218,7 @@ func (ss *serviceState) filterValidEndpointsWithDetails(availableEndpoints proto
 		if ep.checkBlockNumber.parsedBlockNumberResponse != nil {
 			if url, err := addr.GetURL(); err == nil {
 				h := *ep.checkBlockNumber.parsedBlockNumberResponse
-				if existing, ok := urlBlockHeights[url]; !ok || h > existing {
+				if existing, ok := urlBlockHeights[url]; !ok || h < existing {
 					urlBlockHeights[url] = h
 				}
 			}
@@ -230,9 +233,10 @@ func (ss *serviceState) filterValidEndpointsWithDetails(availableEndpoints proto
 	// Merge cached Redis URL block heights as fallback.
 	// This catches stale URLs that aren't in the local store yet
 	// (e.g., new supplier addresses after session rotation).
+	// Uses MIN to be conservative — stale URLs should not pass the filter.
 	if cached := ss.redisURLBlockHeights.Load(); cached != nil {
 		for url, h := range *cached {
-			if existing, ok := urlBlockHeights[url]; !ok || h > existing {
+			if existing, ok := urlBlockHeights[url]; !ok || h < existing {
 				urlBlockHeights[url] = h
 			}
 		}
@@ -646,7 +650,7 @@ func (ss *serviceState) filterStaleURLEndpoints(endpoints protocol.EndpointAddrL
 		if ep.checkBlockNumber.parsedBlockNumberResponse != nil {
 			if url, err := addr.GetURL(); err == nil {
 				h := *ep.checkBlockNumber.parsedBlockNumberResponse
-				if existing, ok := urlBlockHeights[url]; !ok || h > existing {
+				if existing, ok := urlBlockHeights[url]; !ok || h < existing {
 					urlBlockHeights[url] = h
 				}
 			}
@@ -657,7 +661,7 @@ func (ss *serviceState) filterStaleURLEndpoints(endpoints protocol.EndpointAddrL
 	// Merge cached Redis URL block heights as fallback.
 	if cached := ss.redisURLBlockHeights.Load(); cached != nil {
 		for url, h := range *cached {
-			if existing, ok := urlBlockHeights[url]; !ok || h > existing {
+			if existing, ok := urlBlockHeights[url]; !ok || h < existing {
 				urlBlockHeights[url] = h
 			}
 		}

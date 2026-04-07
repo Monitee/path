@@ -395,7 +395,7 @@ func (qos *QoS) StartBackgroundSync(ctx context.Context, syncInterval time.Durat
 		urlHeights := make(map[string]uint64, len(heights))
 		for addr, h := range heights {
 			if url, err := addr.GetURL(); err == nil {
-				if existing, ok := urlHeights[url]; !ok || h > existing {
+				if existing, ok := urlHeights[url]; !ok || h < existing {
 					urlHeights[url] = h
 				}
 			}
@@ -417,15 +417,11 @@ func (qos *QoS) StartBackgroundSync(ctx context.Context, syncInterval time.Durat
 				updated++
 				continue
 			}
-			localHeight := uint64(0)
-			if ep.checkCometBFTStatus.latestBlockHeight != nil {
-				localHeight = *ep.checkCometBFTStatus.latestBlockHeight
-			}
-			if redisHeight > localHeight {
-				ep.checkCometBFTStatus.latestBlockHeight = &redisH
-				qos.endpointStore.endpoints[addr] = ep
-				updated++
-			}
+			// Always overwrite with Redis value — the leader is the authority.
+			// If a node falls behind, non-leaders must see the lower block height.
+			ep.checkCometBFTStatus.latestBlockHeight = &redisH
+			qos.endpointStore.endpoints[addr] = ep
+			updated++
 		}
 
 		// Second pass: populate session endpoints that weren't in Redis by URL fallback.

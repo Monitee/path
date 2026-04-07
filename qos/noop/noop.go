@@ -331,7 +331,7 @@ func (n *NoOpQoS) StartBackgroundSync(ctx context.Context, syncInterval time.Dur
 		urlHeights := make(map[string]uint64, len(heights))
 		for addr, h := range heights {
 			if url, err := addr.GetURL(); err == nil {
-				if existing, ok := urlHeights[url]; !ok || h > existing {
+				if existing, ok := urlHeights[url]; !ok || h < existing {
 					urlHeights[url] = h
 				}
 			}
@@ -349,7 +349,9 @@ func (n *NoOpQoS) StartBackgroundSync(ctx context.Context, syncInterval time.Dur
 				updated++
 				continue
 			}
-			if redisHeight > ep.blockHeight {
+			// Always overwrite with Redis value — the leader is the authority.
+			// If a node falls behind, non-leaders must see the lower block height.
+			if redisHeight != ep.blockHeight {
 				ep.blockHeight = redisHeight
 				n.endpointStore.endpoints[addr] = ep
 				updated++

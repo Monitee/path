@@ -116,6 +116,18 @@ func recordHeuristicErrorToReputation(
 		return
 	}
 
+	// Archival/capability limitation errors (pruned state, historical state not available)
+	// should NOT penalize the supplier's reputation. The supplier correctly reported it
+	// can't serve archival data — retrying on a different supplier is correct, but
+	// punishing this supplier for a capability mismatch is wrong.
+	if heuristicResult.MatchedPattern != "" && heuristic.IsCapabilityLimitationError(heuristicResult.MatchedPattern) {
+		logger.Debug().
+			Str("endpoint", string(endpointAddr)).
+			Str("matched_pattern", heuristicResult.MatchedPattern).
+			Msg("Skipping reputation penalty for capability limitation error")
+		return
+	}
+
 	keyBuilder := reputationSvc.KeyBuilderForService(serviceID)
 	endpointKey := keyBuilder.BuildKey(serviceID, endpointAddr, rpcType)
 

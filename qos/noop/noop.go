@@ -78,12 +78,21 @@ func (n *NoOpQoS) ParseHTTPRequest(_ context.Context, httpRequest *http.Request,
 		return requestContextFromError(fmt.Errorf("error reading the HTTP request body: %w", err)), false
 	}
 
+	// Capture incoming headers for forwarding through the POKT relay to the backend service.
+	// This allows custom headers (e.g. Authorization, X-Owner-Token) to reach the backend.
+	requestHeaders := make(map[string]string)
+	for key, values := range httpRequest.Header {
+		if len(values) > 0 {
+			requestHeaders[key] = values[0]
+		}
+	}
 	return &requestContext{
-		httpRequestBody:   bz,
-		httpRequestMethod: httpRequest.Method,
-		httpRequestPath:   httpRequest.URL.Path,
-		detectedRPCType:   detectedRPCType,
-		endpointSelector:  n.newFilteringSelector(),
+		httpRequestBody:    bz,
+		httpRequestMethod:  httpRequest.Method,
+		httpRequestPath:    httpRequest.URL.Path,
+		httpRequestHeaders: requestHeaders,
+		detectedRPCType:    detectedRPCType,
+		endpointSelector:   n.newFilteringSelector(),
 	}, true
 }
 

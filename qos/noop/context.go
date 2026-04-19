@@ -33,6 +33,11 @@ type requestContext struct {
 	// requestContext was constructed.
 	httpRequestPath string
 
+	// httpRequestHeaders contains the headers of the HTTP request for which this instance of
+	// requestContext was constructed. Used to forward custom headers (e.g. Authorization,
+	// X-Owner-Token) through the POKT relay to the backend service.
+	httpRequestHeaders map[string]string
+
 	// receivedResponses maintains response(s) received from one or more endpoints, for the
 	// request represented by this instance of requestContext.
 	receivedResponses []endpointResponse
@@ -80,7 +85,7 @@ func (rc *requestContext) GetServicePayloads() []protocol.Payload {
 						Data:    string(item),
 						Method:  rc.httpRequestMethod,
 						Path:    path,
-						Headers: map[string]string{},
+						Headers: rc.httpRequestHeaders,
 						RPCType: rc.detectedRPCType,
 					})
 				}

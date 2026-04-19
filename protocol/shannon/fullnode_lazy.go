@@ -267,6 +267,13 @@ func shannonJsonRpcHttpRequest(payload protocol.Payload, url string) (*http.Requ
 	}
 
 	jsonRpcServiceReq.Header.Set("Content-Type", "application/json")
+	// Forward custom headers from the payload to the relay miner request.
+	// This allows headers like Authorization and X-Owner-Token to reach the backend service.
+	for key, value := range payload.Headers {
+		if key != "" && value != "" {
+			jsonRpcServiceReq.Header.Set(key, value)
+		}
+	}
 	return jsonRpcServiceReq, nil
 }
 
